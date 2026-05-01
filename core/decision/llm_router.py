@@ -1,25 +1,22 @@
 from core.llm import get_llm
-import json
+from core.utils.json_utils import extract_json, parse_json_safe
+from core.utils.retry import retry_llm_call
 
 llm = get_llm()
-
 
 ROUTER_PROMPT = """
 You are an AI decision engine.
 
-Your job is to decide how to handle a user query.
-
-Choose ONE action from:
-- memory → if user is asking about previous result (summary, key points)
-- rag → if user is asking knowledge questions from documents
-- tool → if user wants to analyze file or calculate something
-- answer → if general question
+Choose ONE route:
+- memory
+- rag
+- tool
+- answer
 
 Respond ONLY in JSON:
 
 {{
-  "route": "memory | rag | tool | answer",
-  "reason": "short explanation"
+  "route": "memory | rag | tool | answer"
 }}
 
 User Question:
@@ -30,10 +27,17 @@ User Question:
 def route_with_llm(question):
     prompt = ROUTER_PROMPT.format(question=question)
 
-    response = llm.invoke(prompt)
+    for response in retry_llm_call(llm, prompt):
+        if not response:
+            continue
 
-    try:
-        data = json.loads(response)
-        return data.get("route", "answer")
-    except:
-        return "answer"
+        cleaned = extract_json(response)
+        data = parse_json_safe(cleaned)
+
+        route = data.get("route")
+
+        if route:
+            return route.strip().lower()
+
+    # 🔥 FINAL FALLBACK
+    return "answer"

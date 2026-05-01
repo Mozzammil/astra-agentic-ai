@@ -11,7 +11,7 @@ from core.memory.simple_memory import SimpleMemory
 # 🔥 RAG
 from core.rag.rag_pipeline import index_text, retrieve
 
-# 🔥 Decision Engine
+# 🔥 LLM Router (Day 19)
 from core.decision.llm_router import route_with_llm
 
 llm = get_llm()
@@ -45,12 +45,14 @@ def run_agent(question, max_steps=5):
     previous_actions = []
     last_result = None
 
-    # 🧠 INTENT DETECTION
+    # ==================================================
+    # 🧠 LLM DECISION ENGINE (Day 19)
+    # ==================================================
     intent = route_with_llm(question)
     intent = intent.strip().lower()
-    print("🧠 Detected intent:", intent)
+    print("🧠 LLM Decided:", intent)
 
-    # ✅ VALIDATION GUARD (ADD HERE)
+    # ✅ VALIDATION GUARD
     VALID_INTENTS = ["memory", "rag", "tool", "answer"]
 
     if intent not in VALID_INTENTS:
@@ -58,7 +60,7 @@ def run_agent(question, max_steps=5):
         intent = "answer"
 
     # ==================================================
-    # 🔥 MEMORY INTENT (FAST PATH - NO LLM)
+    # 🔥 MEMORY INTENT (FAST PATH)
     # ==================================================
     if intent == "memory":
         for item in reversed(memory.history):
@@ -77,7 +79,7 @@ def run_agent(question, max_steps=5):
         return "No relevant memory found."
 
     # ==================================================
-    # 🔥 RAG CONTEXT INJECTION (BEFORE LLM)
+    # 🔥 RAG CONTEXT INJECTION
     # ==================================================
     if intent == "rag":
         retrieved_chunks = retrieve(question)
@@ -103,7 +105,14 @@ IMPORTANT:
         memory_context = memory.get_context()
         prompt = build_agent_prompt(question, scratchpad, memory_context)
 
-        response = llm.invoke(prompt).strip()
+        # 🔥 SAFE LLM CALL
+        response = llm.invoke(prompt)
+
+        if not response or len(response.strip()) == 0:
+            print("⚠️ Empty LLM response → retrying")
+            continue
+
+        response = response.strip()
 
         print("\nLLM RESPONSE:\n", response)
 
@@ -162,11 +171,8 @@ IMPORTANT:
 
                 memory.add("user", question)
 
-                # store structured memory only if valid
-                if isinstance(parsed, dict) and "summary" in parsed:
+                if isinstance(parsed, dict):
                     memory.add_structured(parsed)
-                else:
-                    memory.add("assistant", action_input)
 
                 return parsed
 
@@ -206,7 +212,7 @@ IMPORTANT:
         print("\nTOOL RESULT:", result)
 
         # ==================================================
-        # 🔥 RAG INDEXING (AFTER FILE READ)
+        # 🔥 RAG INDEXING
         # ==================================================
         if action == "file_reader":
             content = result.get("content", "")
