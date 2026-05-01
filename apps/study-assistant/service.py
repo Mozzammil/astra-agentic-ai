@@ -1,35 +1,51 @@
 from core.llm import get_llm
-from core.parser import extract_json, parse_json
-from core.retry import retry_llm_call
-from core.validator import validate_study_response
 from core.tools.calculator import calculator
 from core.tools.summarizer import summarizer
-from prompts import build_prompt
+from agent_prompt import build_agent_prompt
 
 llm = get_llm()
 
-def ask(question):
-    prompt = build_prompt(question)
+TOOLS = {
+    "calculator": calculator,
+    "summarizer": summarizer
+}
 
-    for response in retry_llm_call(llm, prompt):
-        print("RAW:", response)  # debug
+def parse_agent_output(text):
+    lines = text.strip().split("\n")
 
-        cleaned = extract_json(response)
-        data = parse_json(cleaned)
+    action = None
+    action_input = None
 
-        if not data:
-            continue
+    for line in lines:
+        if line.startswith("Action:"):
+            action = line.replace("Action:", "").strip()
+        elif line.startswith("Input:"):
+            action_input = line.replace("Input:", "").strip()
 
-        action = data.get("action")
+    return action, action_input
 
-        # 🔥 TOOL ROUTING
-        if action == "calculator":
-            return calculator(data.get("input"))
 
-        if action == "summarizer":
-            return summarizer(data.get("input"))
+def run_agent(question, max_steps=5):
+    scratchpad = ""
 
-        if action == "answer" and validate_study_response(data):
-            return data
+    for step in range(max_steps):
+        prompt = build_agent_prompt(question, scratchpad)
 
-    return {"error": "failed"}
+        response = llm.invoke(prompt)
+        print(f"\nSTEP {step+1} RESPONSE:\n{response}")
+
+        action, action_input = parse_agent_output(response)
+
+        if action == "final":
+            return action_input
+
+        if action in TOOLS:
+            result = TOOLS[action](action_input)
+
+            observation = f"Observation: {result}"
+
+            scratchpad += f"\n{response}\n{observation}\n"
+        else:
+            return "Invalid action"
+
+    return "Max steps reached"
