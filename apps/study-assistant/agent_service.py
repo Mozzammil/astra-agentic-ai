@@ -12,7 +12,7 @@ from core.memory.simple_memory import SimpleMemory
 from core.rag.rag_pipeline import index_text, retrieve
 
 # 🔥 Decision Engine
-from core.decision.intent_router import route_question
+from core.decision.llm_router import route_with_llm
 
 llm = get_llm()
 memory = SimpleMemory()
@@ -46,8 +46,16 @@ def run_agent(question, max_steps=5):
     last_result = None
 
     # 🧠 INTENT DETECTION
-    intent = route_question(question)
+    intent = route_with_llm(question)
+    intent = intent.strip().lower()
     print("🧠 Detected intent:", intent)
+
+    # ✅ VALIDATION GUARD (ADD HERE)
+    VALID_INTENTS = ["memory", "rag", "tool", "answer"]
+
+    if intent not in VALID_INTENTS:
+        print("⚠️ Invalid intent from LLM → fallback to answer")
+        intent = "answer"
 
     # ==================================================
     # 🔥 MEMORY INTENT (FAST PATH - NO LLM)
