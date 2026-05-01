@@ -1,0 +1,1 @@
+Microservices architecture is a design approach where applications are built as a collection of loosely coupled services. Each service is independent, scalable, and can be developed using different technologies.
