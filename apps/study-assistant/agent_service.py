@@ -7,12 +7,11 @@ from core.tools.file_reader import file_reader
 from core.tools.file_analyzer import file_analyzer
 from agent_prompt import build_agent_prompt
 from core.memory.simple_memory import SimpleMemory
-
 # 🔥 RAG
 from core.rag.rag_pipeline import index_text, retrieve
-
 # 🔥 LLM Router (Day 19)
 from core.decision.llm_router import route_with_llm
+from core.agent.planner import create_plan
 
 llm = get_llm()
 memory = SimpleMemory()
@@ -40,6 +39,27 @@ def extract_filename(text):
     return match.group(1) if match else None
 
 
+def execute_plan(steps):
+    results = []
+
+    for step in steps:
+        action = step.get("action")
+        action_input = step.get("input")
+
+        print(f"\n🚀 Executing: {action} | {action_input}")
+
+        if action not in TOOLS:
+            return f"Unknown action in plan: {action}"
+
+        try:
+            result = TOOLS[action](action_input)
+            results.append(result)
+        except Exception as e:
+            return f"Step failed: {str(e)}"
+
+    return results[-1] if results else "No result"
+
+
 def run_agent(question, max_steps=5):
     scratchpad = ""
     previous_actions = []
@@ -51,6 +71,21 @@ def run_agent(question, max_steps=5):
     intent = route_with_llm(question)
     intent = intent.strip().lower()
     print("🧠 LLM Decided:", intent)
+
+    # 🔥 HARD OVERRIDE FOR TOOL QUERIES
+    if ".txt" in question.lower() or "file" in question.lower():
+        print("🛠️ Detected file query → forcing TOOL intent")
+        intent = "tool"
+
+    # ==================================================
+    # 🧠 PLANNING STEP (Day 21)
+    # ==================================================
+    if intent == "tool":
+        plan = create_plan(question)
+
+        if plan:
+            print("🧠 Generated Plan:", plan)
+            return execute_plan(plan)
 
     # ✅ VALIDATION GUARD
     VALID_INTENTS = ["memory", "rag", "tool", "answer"]
