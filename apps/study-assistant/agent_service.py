@@ -8,8 +8,11 @@ from core.tools.file_analyzer import file_analyzer
 from agent_prompt import build_agent_prompt
 from core.memory.simple_memory import SimpleMemory
 
-# 🔥 RAG imports
+# 🔥 RAG
 from core.rag.rag_pipeline import index_text, retrieve
+
+# 🔥 Decision Engine
+from core.decision.intent_router import route_question
 
 llm = get_llm()
 memory = SimpleMemory()
@@ -42,33 +45,49 @@ def run_agent(question, max_steps=5):
     previous_actions = []
     last_result = None
 
-    q = question.lower()
+    # 🧠 INTENT DETECTION
+    intent = route_question(question)
+    print("🧠 Detected intent:", intent)
 
-    # 🔥 MEMORY SHORTCUTS
-    if any(k in q for k in ["key point", "points", "highlights"]):
+    # ==================================================
+    # 🔥 MEMORY INTENT (FAST PATH - NO LLM)
+    # ==================================================
+    if intent == "memory":
         for item in reversed(memory.history):
             if isinstance(item["content"], dict):
-                points = item["content"].get("key_points")
-                if points:
-                    return points
 
-    if "summary" in q:
-        for item in reversed(memory.history):
-            if isinstance(item["content"], dict):
-                summary = item["content"].get("summary")
-                if summary:
-                    return summary
+                if "key point" in question.lower():
+                    points = item["content"].get("key_points")
+                    if points:
+                        return points
 
-    # 🔥 RAG RETRIEVAL (before LLM)
-    retrieved_chunks = retrieve(question)
-    if retrieved_chunks:
-        print("📚 Retrieved context:", retrieved_chunks)
+                if "summary" in question.lower():
+                    summary = item["content"].get("summary")
+                    if summary:
+                        return summary
 
-        scratchpad += f"""
+        return "No relevant memory found."
+
+    # ==================================================
+    # 🔥 RAG CONTEXT INJECTION (BEFORE LLM)
+    # ==================================================
+    if intent == "rag":
+        retrieved_chunks = retrieve(question)
+
+        if retrieved_chunks:
+            print("📚 Using RAG context:", retrieved_chunks)
+
+            scratchpad += f"""
 Relevant context:
 {retrieved_chunks}
+
+IMPORTANT:
+- Answer ONLY using this context
 """
 
+    # ==================================================
+    # 🔁 MAIN AGENT LOOP
+    # ==================================================
     for step in range(max_steps):
         print("\n" + "=" * 50)
         print(f"STEP {step + 1}")
@@ -80,6 +99,7 @@ Relevant context:
 
         print("\nLLM RESPONSE:\n", response)
 
+        # ⚠️ Multi-step hallucination guard
         if "Step 2" in response or "Step 3" in response:
             print("⚠️ LLM tried to plan ahead. Forcing first step only.")
 
@@ -91,7 +111,7 @@ Relevant context:
         if not action:
             return "Failed to parse action"
 
-        # 🧹 CLEAN + NORMALIZE
+        # 🧹 CLEAN ACTION
         action = action.split("(")[0].strip().lower()
 
         # 🔀 MULTI-ACTION HANDLING
@@ -111,20 +131,22 @@ Relevant context:
 
             file_name = extract_filename(question)
 
-            if file_name:
-                print("🔁 File detected → using file_reader")
+            if intent == "tool" and file_name:
+                print("🔁 Tool intent → forcing file_reader")
                 action = "file_reader"
                 action_input = file_name
             else:
-                return "Please provide a file name like sample.txt"
+                return "I couldn't understand the action. Please rephrase."
 
-        # 🔥 FORCE CORRECT TOOL FLOW
+        # 🔥 FORCE CORRECT FLOW
         if action == "file_analyzer" and ".txt" in str(action_input):
-            print("⚠️ Analyzer called with filename → switching to file_reader first")
+            print("⚠️ Analyzer called with filename → switching to file_reader")
             action = "file_reader"
 
-        # ✅ FINAL
-        if action and action.lower() == "final":
+        # ==================================================
+        # ✅ FINAL RESPONSE
+        # ==================================================
+        if action == "final":
             print("\n✅ FINAL ANSWER REACHED")
 
             try:
@@ -132,7 +154,8 @@ Relevant context:
 
                 memory.add("user", question)
 
-                if "summary" in parsed and "key_points" in parsed:
+                # store structured memory only if valid
+                if isinstance(parsed, dict) and "summary" in parsed:
                     memory.add_structured(parsed)
                 else:
                     memory.add("assistant", action_input)
@@ -144,7 +167,9 @@ Relevant context:
                 memory.add("assistant", action_input)
                 return action_input
 
-        # 🔁 PREVENT REPEAT FILE READ
+        # ==================================================
+        # 🔁 LOOP & TOOL CONTROL
+        # ==================================================
         if action == "file_reader" and "file_reader" in previous_actions:
             print("⚠️ Preventing repeated file read → switching to analyzer")
 
@@ -153,7 +178,6 @@ Relevant context:
             if isinstance(last_result, dict):
                 action_input = last_result.get("content", "")
 
-        # 🔁 LOOP DETECTION
         if action in previous_actions:
             return f"Loop detected: '{action}' repeated"
 
@@ -162,7 +186,9 @@ Relevant context:
         if action not in TOOLS:
             return f"Unknown action: {action}"
 
+        # ==================================================
         # 🔧 EXECUTE TOOL
+        # ==================================================
         try:
             result = TOOLS[action](action_input)
             last_result = result
@@ -171,14 +197,18 @@ Relevant context:
 
         print("\nTOOL RESULT:", result)
 
-        # 🔥 RAG INDEXING AFTER FILE READ
+        # ==================================================
+        # 🔥 RAG INDEXING (AFTER FILE READ)
+        # ==================================================
         if action == "file_reader":
             content = result.get("content", "")
             if content:
                 print("📥 Indexing content into vector DB")
                 index_text(content)
 
+        # ==================================================
         # 🧠 SCRATCHPAD UPDATE
+        # ==================================================
         scratchpad += f"""
 You have already executed:
 Action: {action}
@@ -192,7 +222,9 @@ IMPORTANT:
 - Use this observation to decide next step
 """
 
+        # ==================================================
         # 🔥 SMART EXIT
+        # ==================================================
         if action in ["file_analyzer", "summarizer"]:
             return result
 
