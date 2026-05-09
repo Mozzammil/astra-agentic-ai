@@ -1,29 +1,23 @@
 import os
 
-# 🔥 Get project root dynamically
-CURRENT_DIR = os.path.dirname(__file__)
-
-# core/tools → go up 2 levels → project root
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../"))
-
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-
-
-def file_reader(file_name: str):
+def file_reader(file_path):
     try:
-        file_path = os.path.join(DATA_DIR, file_name)
+        base_path = os.path.abspath("data")
+        full_path = os.path.join(base_path, file_path)
 
-        print("📂 Trying path:", file_path)
+        print("📂 Trying path:", full_path)
 
-        with open(file_path, "r", encoding="utf-8") as f:
+        if not os.path.exists(full_path):
+            return {"error": f"File not found: {full_path}"}
+
+        with open(full_path, "r") as f:
             content = f.read()
 
         return {
-            "file_path": file_path,
-            "content": content[:2000]
+            "type": "file",
+            "content": content,
+            "metadata": {"path": full_path}
         }
 
     except Exception as e:
-        return {
-            "error": str(e)
-        }
+        return {"error": str(e)}
